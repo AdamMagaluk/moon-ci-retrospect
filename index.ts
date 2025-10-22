@@ -36,6 +36,28 @@ async function main(): Promise<void> {
 		return;
 	}
 
+	// Check if we're in a GitHub Actions environment
+	const isGitHubActions = process.env["GITHUB_ACTIONS"] === "true";
+	
+	// Initialize GitHub Actions summary (only if in GitHub Actions)
+	let summary: any = null;
+	if (isGitHubActions) {
+		summary = core.summary
+			.addHeading("Moon CI Retrospect Results")
+			.addRaw("This report shows the results of Moon CI task executions.\n");
+	}
+
+	// Track task results for summary
+	const taskResults: Array<{
+		target: string;
+		status: ActionStatus;
+		command: string | undefined;
+		hasStdout: boolean;
+		hasStderr: boolean;
+		stdout: string | undefined;
+		stderr: string | undefined;
+	}> = [];
+
 	for (const action of report.actions) {
 		if (action.node.action !== "run-task") {
 			continue;
@@ -51,6 +73,18 @@ async function main(): Promise<void> {
 		const hasStdout = stdout.trim() !== "";
 		const hasStderr = stderr.trim() !== "";
 
+		// Store task results for summary
+		taskResults.push({
+			target,
+			status: action.status,
+			command: typeof command === "string" ? command : undefined,
+			hasStdout,
+			hasStderr,
+			stdout: hasStdout ? stdout : undefined,
+			stderr: hasStderr ? stderr : undefined,
+		});
+
+		// Console output (existing functionality)
 		core.startGroup(`${statusBadges[action.status]} ${bold(target)}`);
 
 		if (typeof command === "string") {
@@ -69,6 +103,60 @@ async function main(): Promise<void> {
 
 		core.endGroup();
 	}
+
+	// Build GitHub Actions summary (only if in GitHub Actions environment)
+	if (isGitHubActions && summary && taskResults.length > 0) {
+		// Create summary table
+		const tableRows = taskResults.map(({ target, status, command, hasStdout, hasStderr }) => {
+			const statusEmoji = getStatusEmoji(status);
+			const outputs = [];
+			if (hasStdout) outputs.push("📤 stdout");
+			if (hasStderr) outputs.push("📥 stderr");
+			
+			return [
+				{ data: target, header: false },
+				{ data: `${statusEmoji} ${status}`, header: false },
+				{ data: command || "-", header: false },
+				{ data: outputs.join(", ") || "-", header: false },
+			];
+		});
+
+		summary
+			.addTable([
+				[
+					{ data: "Task", header: true },
+					{ data: "Status", header: true },
+					{ data: "Command", header: true },
+					{ data: "Outputs", header: true },
+				],
+				...tableRows,
+			])
+			.addBreak();
+
+		// Add detailed results for each task
+		for (const result of taskResults) {
+			summary.addHeading(`Task: ${result.target}`, 3);
+			
+			if (result.command) {
+				summary.addCodeBlock(result.command, "bash");
+			}
+
+			if (result.hasStdout) {
+				summary.addHeading("STDOUT", 4);
+				summary.addCodeBlock(result.stdout!, "text");
+			}
+
+			if (result.hasStderr) {
+				summary.addHeading("STDERR", 4);
+				summary.addCodeBlock(result.stderr!, "text");
+			}
+
+			summary.addBreak();
+		}
+
+		// Write the summary
+		await summary.write();
+	}
 }
 
 interface TargetIdentity {
@@ -78,6 +166,28 @@ interface TargetIdentity {
 
 function sanitizeProjectName(project: string): string {
 	return project.replace(/\//g, "-");
+}
+
+function getStatusEmoji(status: ActionStatus): string {
+	switch (status) {
+		case "passed":
+			return "✅";
+		case "failed":
+		case "timed-out":
+		case "aborted":
+		case "invalid":
+		case "failed-and-abort":
+			return "❌";
+		case "skipped":
+			return "⏭️";
+		case "cached":
+		case "cached-from-remote":
+			return "💾";
+		case "running":
+			return "🏃";
+		default:
+			return "❓";
+	}
 }
 
 function parseTarget(target: string): TargetIdentity {
