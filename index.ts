@@ -76,6 +76,10 @@ interface TargetIdentity {
 	project: (string & {}) | "unknown";
 }
 
+function sanitizeProjectName(project: string): string {
+	return project.replace(/\//g, "-");
+}
+
 function parseTarget(target: string): TargetIdentity {
 	const parts = target.split(":");
 
@@ -99,7 +103,8 @@ async function readStatus(
 	workspaceRoot: string,
 	{ project, task }: TargetIdentity,
 ): Promise<{ stdout: string; stderr: string }> {
-	const statusDir = `${workspaceRoot}/.moon/cache/states/${project}/${task}`;
+	const sanitizedProject = sanitizeProjectName(project);
+	const statusDir = `${workspaceRoot}/.moon/cache/states/${sanitizedProject}/${task}`;
 
 	const stdoutPath = `${statusDir}/stdout.log`;
 	const stderrPath = `${statusDir}/stderr.log`;
